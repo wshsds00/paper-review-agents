@@ -59,7 +59,7 @@ def run_pipeline(pdf_paths=None):
     output_path = "output/review_draft.md"
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(f"# 自动生成综述草稿\n\n{review}")
-    print(f"✅ 综述已保存至 {output_path}")
+    print(f" 综述已保存至 {output_path}")
     return review
 
 if __name__ == "__main__":
