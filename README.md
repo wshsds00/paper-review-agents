@@ -1,4 +1,4 @@
-\# PaperReview Agents — 多Agent协作论文综述生成器
+# PaperReview Agents — 多Agent协作论文综述生成器
 
 
 
@@ -6,7 +6,7 @@
 
 
 
-\## 系统架构
+## 系统架构
 
 
 
@@ -22,15 +22,15 @@
 
 
 
-\## 快速开始
+## 快速开始
 
 
 
-\### 安装依赖  
+### 安装依赖  
 pip install -r requirements.txt
 
-\### 配置 API Key
-\### 安装依赖  复制环境变量模板
+### 配置 API Key
+### 安装依赖  复制环境变量模板
 cp .env.example .env
-\### 安装依赖  编辑 .env，将 sk-your-api-key-here 替换为你的真实 API Key（OpenAI 或兼容接口）
+### 安装依赖  编辑 .env，将 sk-your-api-key-here 替换为你的真实 API Key（OpenAI 或兼容接口）
 
