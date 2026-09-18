@@ -1,12 +1,17 @@
 import re
 from utils.llm_client import call_llm
 
-PLAN_PROMPT = """根据下面的多篇论文对比分析，请为一篇学术综述生成大纲，要求包含：
+PLAN_PROMPT = """根据下面的多篇论文对比分析，请为一篇学术综述生成大纲。
+
+内容必须包含以下三个方面（可以拆成 4-6 个小节）：
 - 领域背景与现状
 - 各方法详细介绍与优劣比较
 - 未来可能的研究方向
 
-请用Markdown标题层级（## 表示大标题）列出大纲，每个要点一行。
+格式要求：
+- 只输出 4-6 个顶层小节，每行一个，用 ## 标记
+- 不要展开子条目，不要出现 1.1 / 1.2 这类二级编号
+- 不要在 ## 下面再写 - 或 ### 子项
 
 对比分析内容：
 {comparison_result}
@@ -54,6 +59,9 @@ CONSISTENCY_PROMPT = """请对以下综述全文做一致性检查，直接输�
 # 默认小节标题（大纲解析失败时降级使用）
 DEFAULT_SECTIONS = ["研究背景与现状", "各方法详细介绍与优劣比较", "未来可能的研究方向"]
 
+# 大纲小节数上限，超出则截断
+MAX_SECTIONS = 8
+
 # 占位文本常量：生成失败时使用，一致性检查会跳过以保留此标记
 PLACEHOLDER_TEXT = "（本节生成失败，请人工补写）"
 
@@ -65,38 +73,61 @@ def generate_outline(comparison_text: str) -> str:
 
 
 def parse_outline(outline: str) -> list[str]:
-    """把 LLM 生成的大纲文本解析成小节标题列表。"""
-    sections: list[str] = []
+    """把 LLM 生成的大纲文本解析成小节标题列表（层级优取 + 上限截断）。"""
+    # 第一步：逐行解析，记录 (标题, 层级)
+    # 层级：# → 1, ## → 2, ### → 3, 更深 → 4, -/* → 5, 1. → 6, **加粗** → 5
+    raw: list[tuple[str, int]] = []
     for line in outline.strip().splitlines():
         line = line.strip()
-        # 跳过空行和分隔线
         if not line or re.match(r'^-{3,}$', line):
             continue
-        # Markdown 标题：## xxx
-        m = re.match(r'^#{1,6}\s+(.+)$', line)
+        # Markdown 标题
+        m = re.match(r'^(#{1,6})\s+(.+)$', line)
         if m:
-            sections.append(m.group(1).strip())
+            level = min(len(m.group(1)), 4)
+            raw.append((m.group(2).strip(), level))
             continue
-        # 无序列表：- xxx 或 * xxx
+        # 无序列表
         m = re.match(r'^[-*]\s+(.+)$', line)
         if m:
-            sections.append(m.group(1).strip())
+            raw.append((m.group(1).strip(), 5))
             continue
-        # 有序列表：1. xxx 或 1、xxx
+        # 有序列表
         m = re.match(r'^\d+[.、)\]]\s*(.+)$', line)
         if m:
-            sections.append(m.group(1).strip())
+            raw.append((m.group(1).strip(), 6))
             continue
-        # 加粗标题：**xxx**
+        # 加粗标题（无前缀标记，与列表项同级）
         m = re.match(r'^\*\*(.+?)\*\*\s*$', line)
         if m:
-            sections.append(m.group(1).strip())
+            raw.append((m.group(1).strip(), 5))
             continue
 
-    # 过滤掉过短的条目
-    sections = [s for s in sections if len(s) >= 2]
+    # 过滤过短条目
+    raw = [(t, lv) for t, lv in raw if len(t) >= 2]
 
-    # 健壮性：少于 2 个小节时降级
+    if not raw:
+        print("  大纲解析结果为空，使用默认章节结构")
+        return DEFAULT_SECTIONS
+
+    # 第二步：层级优取——只保留 level 最小的那一组
+    min_level = min(lv for _, lv in raw)
+    sections = [t for t, lv in raw if lv == min_level]
+
+    # 如果最小层级条目太少（<2），放宽到下一级
+    if len(sections) < 2:
+        next_levels = sorted(set(lv for _, lv in raw if lv > min_level))
+        for lv in next_levels:
+            sections = [t for t, l in raw if l <= lv]
+            if len(sections) >= 2:
+                break
+
+    # 第三步：上限截断
+    if len(sections) > MAX_SECTIONS:
+        print(f"  [!] 大纲小节数过多（{len(sections)} 个），已截断为前 {MAX_SECTIONS} 个")
+        sections = sections[:MAX_SECTIONS]
+
+    # 最终保底
     if len(sections) < 2:
         print("  大纲解析结果不足，使用默认章节结构")
         return DEFAULT_SECTIONS
@@ -138,11 +169,11 @@ def write_section_by_section(outline: str, comparison_detail: str) -> str:
         try:
             body = call_llm(messages)
             if not body or not body.strip():
-                print(f"    ⚠ 第 {i} 节生成结果为空，使用占位文本")
+                print(f"    [!] 第 {i} 节生成结果为空，使用占位文本")
                 body = PLACEHOLDER_TEXT
                 failed_sections.append(title)
         except Exception as e:
-            print(f"    ⚠ 第 {i} 节生成异常：{e}，使用占位文本")
+            print(f"    [!] 第 {i} 节生成异常：{e}，使用占位文本")
             body = PLACEHOLDER_TEXT
             failed_sections.append(title)
 
@@ -154,7 +185,7 @@ def write_section_by_section(outline: str, comparison_detail: str) -> str:
     # 有失败小节时跳过一致性检查，避免占位标记被覆盖
     if failed_sections:
         titles = "、".join(failed_sections)
-        print(f"  ⚠ 有 {len(failed_sections)} 个小节生成失败：{titles}，跳过一致性检查以避免失败标记被覆盖")
+        print(f"  [!] 有 {len(failed_sections)} 个小节生成失败：{titles}，跳过一致性检查以避免失败标记被覆盖")
         print("  （提示：请人工补写上述小节，或直接编辑输出文件）")
         return full_text
 
@@ -167,8 +198,8 @@ def write_section_by_section(outline: str, comparison_detail: str) -> str:
         if result and result.strip():
             full_text = result.strip()
         else:
-            print("    ⚠ 一致性检查返回空，使用拼接原文")
+            print("    [!] 一致性检查返回空，使用拼接原文")
     except Exception as e:
-        print(f"    ⚠ 一致性检查失败：{e}，使用拼接原文")
+        print(f"    [!] 一致性检查失败：{e}，使用拼接原文")
 
     return full_text
