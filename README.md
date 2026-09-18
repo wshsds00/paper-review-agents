@@ -25,3 +25,17 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env，将 sk-your-api-key-here 替换为你的真实 API Key（OpenAI 或兼容接口）
 ```
+
+若使用 OpenAI 兼容接口（第三方中转、DeepSeek、通义千问等），需在 `.env` 中额外指定平台地址与模型名：
+
+```bash
+OPENAI_BASE_URL=https://your-endpoint.example.com/v1
+OPENAI_MODEL=your-model-name
+```
+
+### 运行
+
+```bash
+python main.py --demo                              # 内置示例论文，无需准备 PDF
+python main.py paper1.pdf paper2.pdf               # 指定 PDF 运行
+```
